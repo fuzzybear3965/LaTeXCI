@@ -7,6 +7,7 @@ from cryptography.fernet import Fernet
 import ConfigParser
 import base64
 import session, repository
+import os,tarfile,errno
 
 app = Flask(__name__)
 app.config.from_envvar('LCICONFIG')
@@ -17,11 +18,30 @@ def writeToFile(filename, data):
     return
 
 def printToLog(message,PRINT_STACK):
-    print("!"*40)
+    print("\n"+"!"*40)
     print message
     if PRINT_STACK == 1:
         traceback.print_exc()
-    print("!"*40)
+    print("!"*40+"\n")
+    return
+
+def extract_archive(relpath):
+    fileroot = os.path.splitext(os.path.basename(relpath))[0] # ignore extension
+    subdir = os.path.split(relpath)[0] # ignore tail
+    tar = tarfile.open("relpath")
+    extractpath = os.path.join(subdir,fileroot)
+    # Make the directory if it doesn't exist
+    if not os.path.exists(extractpath):
+        try:
+            os.makedirs(os.path.dirname(extractpath))
+        except OSError as exc: # protects against races
+            if exc.errno != errno.EEXIST:
+                raise
+    try:
+        tar.extractall(extractpath)
+        printToLog("Successfully extracted archive to: " + extractpath, 0)
+    except:
+        printToLog("Failed to extract archive.",1)
     return
 
 def grab_git_repo(repository):
@@ -34,12 +54,28 @@ def grab_git_repo(repository):
         # below taken from:
         # http://stackoverflow.com/questions/13137817/how-to-download-image-using-requests
         if int(res.status_code) == 200:
-            with open("builds/" + "archive" + ".tar", 'wb') as f:
+            # from:
+            # http://stackoverflow.com/questions/12517451/python-automatically-creating-directories-with-file-output
+            filename = os.path.join("builds",\
+                    repository.json["project"]["name"],\
+                    repository.json["project"]["default_branch"],\
+                    repository.json["after"]+".tar")
+            if not os.path.exists(os.path.dirname(filename)):
+                try:
+                    os.makedirs(os.path.dirname(filename))
+                except OSError as exc: # protects against race conds
+                    if exc.errno != errno.EEXIST:
+                        printToLog("Failed to make the directory!",1)
+                        raise
+            printToLog("Made the directory.",0)
+            with open(filename,"w") as f:
                 for chunk in res.iter_content(2**20):
                     f.write(chunk)
+            printToLog("Downloaded something.",0)
         printToLog("Downloaded repository archive just fine.",0)
+        extract_archive(filename)
     except:
-        printToLog("Failed to launch the downloadToFile() function.",1)
+        printToLog("Failed to download the file.",1)
     return
 
 @app.route('/',methods=['POST'])
